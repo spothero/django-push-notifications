@@ -6,14 +6,24 @@ from django.db import models, connection
 from django.utils.translation import ugettext_lazy as _
 
 try:
-	from django.utils.six import with_metaclass
+	from django.utils import six
 except ImportError:
-	from six import with_metaclass
+	import six
 
 
-__all__ = ["HexadecimalField", "HexIntegerField"]
+__all__ = ["HexadecimalField", "HexIntegerField", "UUIDField"]
+
+# Django <1.8 compatibility: UUIDField
+if hasattr(models, "UUIDField"):
+	UUIDField = models.UUIDField
+else:
+	from uuidfield import UUIDField
 
 hex_re = re.compile(r"^0x[0-9a-fA-F]+$")
+postgres_engines = [
+	"django.db.backends.postgresql_psycopg2",
+	"django.contrib.gis.db.backends.postgis",
+]
 
 
 class HexadecimalField(forms.CharField):
@@ -25,7 +35,7 @@ class HexadecimalField(forms.CharField):
 		super(HexadecimalField, self).__init__(*args, **kwargs)
 
 
-class HexIntegerField(with_metaclass(models.SubfieldBase, models.BigIntegerField)):
+class HexIntegerField(six.with_metaclass(models.SubfieldBase, models.BigIntegerField)):
 	"""
 	This field stores a hexadecimal *string* of up to 64 bits as an unsigned integer
 	on *all* backends including postgres.
@@ -44,24 +54,25 @@ class HexIntegerField(with_metaclass(models.SubfieldBase, models.BigIntegerField
 		elif engine == "django.db.backends.sqlite":
 			return "UNSIGNED BIG INT"
 		else:
-			return super(HexIntegerField, self).db_type(connection)
+			return super(HexIntegerField, self).db_type(connection=connection)
 
 	def get_prep_value(self, value):
 		if value is None or value == "":
 			return None
-		value = int(value, 16)
+		if isinstance(value, six.string_types):
+			value = int(value, 16)
 		# on postgres only, interpret as signed
-		if connection.settings_dict["ENGINE"] == "django.db.backends.postgresql_psycopg2":
+		if connection.settings_dict["ENGINE"] in postgres_engines:
 			value = struct.unpack("q", struct.pack("Q", value))[0]
 		return value
 
 	def to_python(self, value):
-		if isinstance(value, str):
+		if isinstance(value, six.string_types):
 			return value
 		if value is None:
 			return ""
 		# on postgres only, re-interpret from signed to unsigned
-		if connection.settings_dict["ENGINE"] == "django.db.backends.postgresql_psycopg2":
+		if connection.settings_dict["ENGINE"] in postgres_engines:
 			value = hex(struct.unpack("Q", struct.pack("q", value))[0])
 		return value
 
